@@ -24,10 +24,12 @@ UTU is a TypeScript-powered Discord bot that brings uwu-energy to your server wi
      - `DISCORD_CLIENT_ID`: Application client ID
      - `DISCORD_GUILD_ID` *(optional)*: Development guild ID for faster slash-command iterations
      - `LOG_LEVEL`: Logging verbosity (`error`, `warn`, `info`, `debug`)
-    - `DATABASE_URL`: MongoDB connection string (e.g. `mongodb://localhost:27017/utu`)
+     - `DATABASE_URL`: MongoDB connection string (e.g. `mongodb://localhost:27017/utu`)
      - `COUNTING_CHANNELS`: Semicolon-separated list using `channelId|webhookUrl|optionalStartingGoal`
        - Example: `COUNTING_CHANNELS=123|https://discord.com/api/webhooks/...|500;456|https://discord.com/api/webhooks/...`
      - Legacy fallback: `COUNTING_CHANNEL_ID` and `COUNTING_WEBHOOK_URL` are still supported if `COUNTING_CHANNELS` is not set
+     - `ENABLE_HEALTH_SERVER` *(optional)*: Start the lightweight HTTP health endpoint (recommended for Replit).
+     - `HEALTH_SERVER_PORT` and `HEALTH_SERVER_HOST` *(optional)*: Override the port and host the health endpoint should use.
 
 ## Counting Channel Utility
 - Users must post in configured counting channels using the format `owo <number>` (case-insensitive)
@@ -50,14 +52,38 @@ npm run deploy:commands
 - **Production build**
   ```bash
   npm run build
-  npm start
+  npm run start:prod
   ```
+  `npm run start` remains available if you prefer a one-step build-and-run command.
 - **Development mode** (compiles on the fly)
   ```bash
   npm run start:dev
   ```
 
 The bot will connect to Discord, ensure database tables exist, and monitor each configured counting channel.
+
+## Hosting on Replit
+The repo ships with `.replit` and `replit.nix` so you can import it directly into a Replit workspace.
+
+1. Create a new Replit by linking this repository.
+2. Add the required secrets via the *Secrets* tab (`DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, optional `DISCORD_GUILD_ID`, `DATABASE_URL`, and your counting-channel variables).
+3. Keep `ENABLE_HEALTH_SERVER` set to `true` so Replit's HTTP pings keep the bot session alive while the workspace is open.
+4. Use the shell to run `npm run deploy:commands` whenever you change slash commands.
+
+> Replit free-tier workspaces sleep shortly after the tab closes. Upgrade or move to another host if you need the bot online 24/7.
+
+## Docker Image
+Build a production image with the bundled `Dockerfile` and run it with your `.env` credentials:
+
+```bash
+docker build -t utu-bot .
+docker run --env-file .env --rm utu-bot
+```
+
+The container runs as the non-root `node` user and expects the same environment variables described above.
+
+## Continuous Integration
+GitHub Actions (`.github/workflows/ci.yml`) installs dependencies and runs `npm run build` on every push and pull request targeting `main`, helping catch TypeScript compile errors before deployment.
 
 ## Project Structure
 ```

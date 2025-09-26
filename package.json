@@ -6,7 +6,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "npm run build && node dist/index.js",
+    "start:prod": "node dist/index.js",
+    "start": "npm run build && npm run start:prod",
     "start:dev": "ts-node src/index.ts",
     "deploy:commands": "ts-node scripts/deploy-commands.ts",
     "reset:counting": "ts-node scripts/reset-counting.ts"

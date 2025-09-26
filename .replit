@@ -1,0 +1,6 @@
+run = "npm run start"
+language = "nodejs"
+
+[env]
+# Enables a simple HTTP server so Replit keeps the process alive.
+ENABLE_HEALTH_SERVER = "true"

@@ -129,5 +129,22 @@ export const env = {
   get countingChannels(): CountingChannelConfig[] {
     return parseCountingChannels();
   },
+  get enableHealthServer(): boolean {
+    const raw = process.env.ENABLE_HEALTH_SERVER;
+    if (!raw) {
+      return false;
+    }
+    return raw.trim().toLowerCase() === 'true';
+  },
+  get healthServerPort(): number | undefined {
+    const explicit = parseOptionalPositiveInteger(process.env.HEALTH_SERVER_PORT);
+    if (explicit !== undefined) {
+      return explicit;
+    }
+    return parseOptionalPositiveInteger(process.env.PORT);
+  },
+  get healthServerHost(): string {
+    const value = process.env.HEALTH_SERVER_HOST?.trim();
+    return value && value.length > 0 ? value : '0.0.0.0';
+  },
 };
-

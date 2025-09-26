@@ -1,7 +1,9 @@
+import type { Server } from 'node:http';
 import { Client, Events, GatewayIntentBits } from 'discord.js';
 import { env } from './config/env';
 import { commandMap } from './commands';
 import { connectToDatabase, type DatabaseConnection } from './lib/db';
+import { startHealthServer } from './lib/health-server';
 import { CountingStore } from './features/counting/store';
 import { CountingFeature } from './features/counting';
 
@@ -14,6 +16,23 @@ const client = new Client({
 });
 
 let dbConnection: DatabaseConnection | null = null;
+let healthServer: Server | null = null;
+
+function closeServer(server: Server | null): Promise<void> {
+  if (!server) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
 
 async function bootstrapCountingFeature(): Promise<void> {
   dbConnection = await connectToDatabase(env.databaseUrl);
@@ -71,6 +90,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 async function main() {
+  if (env.enableHealthServer) {
+    try {
+      healthServer = startHealthServer({
+        port: env.healthServerPort,
+        host: env.healthServerHost,
+      });
+    } catch (error) {
+      console.error('Failed to start health check server:', error);
+    }
+  }
+
   await bootstrapCountingFeature();
 
   console.log('🔌 Logging in...');
@@ -87,6 +117,14 @@ const shutdown = async () => {
     await dbConnection?.client.close();
   } catch (error) {
     console.error('Error while closing database connection:', error);
+  }
+
+  try {
+    await closeServer(healthServer);
+  } catch (error) {
+    console.error('Error while closing health check server:', error);
+  } finally {
+    healthServer = null;
   }
 };
 
