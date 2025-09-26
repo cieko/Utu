@@ -36,21 +36,20 @@ export function buildChannelTopic(
     `Goal: ${goal} (${progress.toFixed(1)}% complete, ${remaining} to go)`
   );
 
-  const leaderboardEntries = sortLeaderboard(state.leaderboard);
-  const totalPages = Math.max(1, Math.ceil(leaderboardEntries.length / 10));
-  const currentPage = Math.min(state.topicPage ?? 0, totalPages - 1);
-  lines.push(`**Top Counters (page ${currentPage + 1}/${totalPages}):**`);
+  const leaderboardEntries = sortLeaderboard(state.leaderboard).slice(0, 10);
+  lines.push(`**Top 10 Counters**`);
   lines.push("");
 
   if (leaderboardEntries.length === 0) {
     lines.push("No counters yet. Be the first!");
   } else {
-    const start = currentPage * 10;
-    const pageEntries = leaderboardEntries.slice(start, start + 10);
-    pageEntries.forEach((entry, index) => {
-      const position = start + index + 1;
+    leaderboardEntries.forEach((entry, index) => {
+      const position = index + 1;
+      const prefix = formatLeaderboardPlace(position);
+      const mention = formatUserMention(entry.userId);
       const displayName = italicize(entry.displayName);
-      lines.push(`${position}. ${displayName} - ${entry.count}`);
+      const nameSegment = mention ? `${mention}` : displayName;
+      lines.push(`${prefix} ${nameSegment} - ${entry.count}`);
     });
   }
 
@@ -58,11 +57,10 @@ export function buildChannelTopic(
 
   // Always show next scheduled update in relative format
   const unix = Math.floor(options.nextReloadAt / 1000); // ms → seconds
-  lines.push(`Next update <t:${unix}:R>`);
+  lines.push(`Refresh <t:${unix}:R>`);
 
   const topic = lines.join("\n").slice(0, 1024);
-  const nextPageIndex = totalPages > 1 ? (currentPage + 1) % totalPages : 0;
-  return { topic, nextPageIndex };
+  return { topic, nextPageIndex: 0 };
 }
 
 function resolveGoal(state: CountingChannelState): number {
@@ -70,6 +68,24 @@ function resolveGoal(state: CountingChannelState): number {
     return Math.floor(state.goal);
   }
   return computeInitialGoal(state);
+}
+
+function formatLeaderboardPlace(position: number): string {
+  if (position === 1) {
+    return "🥇";
+  }
+  if (position === 2) {
+    return "🥈";
+  }
+  if (position === 3) {
+    return "🥉";
+  }
+  return "🏅";
+}
+
+function formatUserMention(userId: string): string {
+  const sanitized = (userId ?? '').replace(/[^0-9]/g, '');
+  return sanitized ? `<@${sanitized}>` : '';
 }
 
 function italicize(value: string): string {

@@ -30,7 +30,24 @@ export async function seedChannelStateFromHistory(
       const value = Number(match[1]);
       if (!Number.isFinite(value)) continue;
       if (value <= currentNumber) continue;
-      if (value !== currentNumber + 1) break;
+
+      if (value > currentNumber + 1) {
+        const gap = value - currentNumber - 1;
+        if (replayed > 0) {
+          logger.warn(
+            `[counting] Detected history gap after ${currentNumber} in channel ${channel.id}; stopping replay.`
+          );
+          break;
+        }
+
+        if (gap > 0) {
+          logger.log(
+            `[counting] Starting replay at ${value} for channel ${channel.id} (skipped ${gap} earlier count(s)).`
+          );
+        }
+
+        currentNumber = value - 1;
+      }
 
       const displayName = resolveMemberDisplayName(historyMessage);
       nextState = await store.recordCount(

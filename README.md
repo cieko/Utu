@@ -10,7 +10,7 @@ UTU is a TypeScript-powered Discord bot that brings uwu-energy to your server wi
 ## Prerequisites
 - Node.js 18.17 or newer
 - A Discord application with a bot user (create one via the [Discord Developer Portal](https://discord.com/developers/applications))
-- Access to a PostgreSQL instance (local or hosted)
+- Access to a MongoDB instance (local or hosted)
 
 ## Getting Started
 1. **Install dependencies**
@@ -24,7 +24,7 @@ UTU is a TypeScript-powered Discord bot that brings uwu-energy to your server wi
      - `DISCORD_CLIENT_ID`: Application client ID
      - `DISCORD_GUILD_ID` *(optional)*: Development guild ID for faster slash-command iterations
      - `LOG_LEVEL`: Logging verbosity (`error`, `warn`, `info`, `debug`)
-     - `DATABASE_URL`: PostgreSQL connection string (e.g. `postgres://user:password@localhost:5432/utu`)
+    - `DATABASE_URL`: MongoDB connection string (e.g. `mongodb://localhost:27017/utu`)
      - `COUNTING_CHANNELS`: Semicolon-separated list using `channelId|webhookUrl|optionalStartingGoal`
        - Example: `COUNTING_CHANNELS=123|https://discord.com/api/webhooks/...|500;456|https://discord.com/api/webhooks/...`
      - Legacy fallback: `COUNTING_CHANNEL_ID` and `COUNTING_WEBHOOK_URL` are still supported if `COUNTING_CHANNELS` is not set
@@ -36,7 +36,7 @@ UTU is a TypeScript-powered Discord bot that brings uwu-energy to your server wi
 - Channel name and topic update to reflect the newest count, progress toward the goal, and a leaderboard (10 users per page, rotating each update)
 - Goals grow automatically: once a target is reached, the next goal becomes the previous goal plus 5%
 - Manual goal overrides persist: set a new target (via future commands or direct DB updates) and the auto-growth resumes using that baseline after completion
-- Counting progress and leaderboard data persist in PostgreSQL tables created on startup
+- Counting progress and leaderboard data persist in MongoDB collections created on startup
 
 ## Deploying Slash Commands
 Run the deployment script whenever you add or modify commands:
@@ -72,12 +72,12 @@ src/
     counting/
       goal.ts             # Goal progression helpers
       index.ts            # Counting feature orchestration
-      store.ts            # Persistent counting state manager (Postgres-backed)
+      store.ts            # Persistent counting state manager (Mongo-backed)
       topic.ts            # Channel topic/name formatting
       utils.ts            # User-facing formatting helpers
       webhook.ts          # Webhook relay helper
   lib/
-    db.ts                 # Database pool factory
+    db.ts                 # MongoDB connection factory
   utils/
     owoify.ts             # Text transformation logic
   index.ts               # Bot bootstrap and feature wiring

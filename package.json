@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "npm run build && node dist/index.js",
     "start:dev": "ts-node src/index.ts",
-    "deploy:commands": "ts-node scripts/deploy-commands.ts"
+    "deploy:commands": "ts-node scripts/deploy-commands.ts",
+    "reset:counting": "ts-node scripts/reset-counting.ts"
   },
   "engines": {
     "node": ">=18.17"
@@ -23,11 +24,10 @@
   "dependencies": {
     "discord.js": "^14.15.3",
     "dotenv": "^16.4.5",
-    "pg": "^8.16.3"
+    "mongodb": "^6.8.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
-    "@types/pg": "^8.15.5",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
   }

@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import type { Collection, Db } from 'mongodb';
 import { DEFAULT_STARTING_GOAL } from './goal';
 
 export interface LeaderboardEntry {
@@ -27,85 +27,63 @@ const defaultStoreState: CountingStoreState = {
   channels: {},
 };
 
-const ensureSchemaSQL = `
-  CREATE TABLE IF NOT EXISTS counting_channels (
-    channel_id TEXT PRIMARY KEY,
-    last_number BIGINT NOT NULL DEFAULT 0,
-    topic_page INTEGER NOT NULL DEFAULT 0,
-    goal BIGINT,
-    goal_source TEXT NOT NULL DEFAULT 'auto',
-    manual_baseline BIGINT,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  );
-
-  CREATE TABLE IF NOT EXISTS counting_leaderboard (
-    channel_id TEXT NOT NULL REFERENCES counting_channels(channel_id) ON DELETE CASCADE,
-    user_id TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    count INTEGER NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (channel_id, user_id)
-  );
-`;
-
 export class CountingStore {
   private state: CountingStoreState = cloneStoreState(defaultStoreState);
 
-  constructor(private readonly db: Pool) {}
+  private readonly channels: Collection<ChannelDocument>;
+  private readonly leaderboard: Collection<LeaderboardDocument>;
+  private indexesEnsured = false;
+
+  constructor(database: Db) {
+    this.channels = database.collection<ChannelDocument>('counting_channels');
+    this.leaderboard = database.collection<LeaderboardDocument>('counting_leaderboard');
+  }
 
   async load(expectedChannelIds: string[] = []): Promise<CountingStoreState> {
-    await this.ensureSchema();
+    await this.ensureIndexes();
 
-    const client = await this.db.connect();
-    try {
-      const channelRows = await client.query<ChannelRow>(
-        'SELECT channel_id, last_number, topic_page, goal, goal_source, manual_baseline FROM counting_channels'
-      );
+    const [channelDocs, leaderboardDocs] = await Promise.all([
+      this.channels.find({}).toArray(),
+      this.leaderboard.find({}).toArray(),
+    ]);
 
-      const leaderboardRows = await client.query<LeaderboardRow>(
-        'SELECT channel_id, user_id, display_name, count FROM counting_leaderboard'
-      );
-
-      const leaderboardMap = new Map<string, Record<string, LeaderboardEntry>>();
-      for (const row of leaderboardRows.rows) {
-        const entries = leaderboardMap.get(row.channel_id) ?? {};
-        entries[row.user_id] = {
-          userId: row.user_id,
-          displayName: row.display_name,
-          count: row.count,
-        };
-        leaderboardMap.set(row.channel_id, entries);
-      }
-
-      const nextState: CountingStoreState = { channels: {} };
-      for (const row of channelRows.rows) {
-        const leaderboard = leaderboardMap.get(row.channel_id) ?? {};
-        nextState.channels[row.channel_id] = normalizeChannelState(row.channel_id, {
-          lastNumber: Number(row.last_number ?? 0),
-          topicPage: row.topic_page ?? 0,
-          leaderboard,
-          goal: row.goal === null || row.goal === undefined ? undefined : Number(row.goal),
-          goalSource: row.goal_source === 'manual' ? 'manual' : 'auto',
-          manualBaseline:
-            row.manual_baseline === null || row.manual_baseline === undefined
-              ? undefined
-              : Number(row.manual_baseline),
-        });
-      }
-
-      for (const channelId of expectedChannelIds) {
-        if (!nextState.channels[channelId]) {
-          const defaultState = createDefaultChannelState(channelId);
-          nextState.channels[channelId] = defaultState;
-          await this.persistChannel(defaultState);
-        }
-      }
-
-      this.state = nextState;
-      return cloneStoreState(this.state);
-    } finally {
-      client.release();
+    const leaderboardMap = new Map<string, Record<string, LeaderboardEntry>>();
+    for (const doc of leaderboardDocs) {
+      const entries = leaderboardMap.get(doc.channelId) ?? {};
+      entries[doc.userId] = {
+        userId: doc.userId,
+        displayName: doc.displayName,
+        count: doc.count,
+      };
+      leaderboardMap.set(doc.channelId, entries);
     }
+
+    const nextState: CountingStoreState = { channels: {} };
+    for (const doc of channelDocs) {
+      const leaderboard = leaderboardMap.get(doc._id) ?? {};
+      nextState.channels[doc._id] = normalizeChannelState(doc._id, {
+        lastNumber: Number(doc.lastNumber ?? 0),
+        topicPage: Number(doc.topicPage ?? 0),
+        leaderboard,
+        goal: doc.goal === null || doc.goal === undefined ? undefined : Number(doc.goal),
+        goalSource: doc.goalSource === 'manual' ? 'manual' : 'auto',
+        manualBaseline:
+          doc.manualBaseline === null || doc.manualBaseline === undefined
+            ? undefined
+            : Number(doc.manualBaseline),
+      });
+    }
+
+    for (const channelId of expectedChannelIds) {
+      if (!nextState.channels[channelId]) {
+        const defaultState = createDefaultChannelState(channelId);
+        nextState.channels[channelId] = defaultState;
+        await this.persistChannel(defaultState);
+      }
+    }
+
+    this.state = nextState;
+    return cloneStoreState(this.state);
   }
 
   snapshot(channelId: string): CountingChannelState {
@@ -126,8 +104,9 @@ export class CountingStore {
   }
 
   async resetChannel(channelId: string, initialGoal = DEFAULT_STARTING_GOAL): Promise<CountingChannelState> {
-    await this.db.query('DELETE FROM counting_leaderboard WHERE channel_id = $1', [channelId]);
-    await this.db.query('DELETE FROM counting_channels WHERE channel_id = $1', [channelId]);
+    await this.ensureIndexes();
+    await this.leaderboard.deleteMany({ channelId });
+    await this.channels.deleteOne({ _id: channelId });
 
     const defaultState = { ...createDefaultChannelState(channelId), goal: initialGoal, goalSource: 'auto' as const };
     this.state.channels[channelId] = defaultState;
@@ -136,35 +115,32 @@ export class CountingStore {
   }
 
   async refreshChannel(channelId: string): Promise<CountingChannelState> {
+    await this.ensureIndexes();
     const current = this.state.channels[channelId] ?? createDefaultChannelState(channelId);
-    const result = await this.db.query<ChannelRow>(
-      'SELECT channel_id, last_number, topic_page, goal, goal_source, manual_baseline FROM counting_channels WHERE channel_id = $1',
-      [channelId]
-    );
+    const doc = await this.channels.findOne({ _id: channelId });
 
-    if (result.rowCount === 0) {
+    if (!doc) {
       this.state.channels[channelId] = current;
       await this.persistChannel(current);
       return cloneChannelState(current);
     }
 
-    const row = result.rows[0];
     const updated = normalizeChannelState(channelId, {
       lastNumber:
-        row.last_number === null || row.last_number === undefined
+        doc.lastNumber === null || doc.lastNumber === undefined
           ? current.lastNumber
-          : Number(row.last_number),
+          : Number(doc.lastNumber),
       topicPage:
-        row.topic_page === null || row.topic_page === undefined
+        doc.topicPage === null || doc.topicPage === undefined
           ? current.topicPage
-          : Number(row.topic_page),
+          : Number(doc.topicPage),
       leaderboard: current.leaderboard,
-      goal: row.goal === null || row.goal === undefined ? undefined : Number(row.goal),
-      goalSource: row.goal_source === 'manual' ? 'manual' : 'auto',
+      goal: doc.goal === null || doc.goal === undefined ? undefined : Number(doc.goal),
+      goalSource: doc.goalSource === 'manual' ? 'manual' : 'auto',
       manualBaseline:
-        row.manual_baseline === null || row.manual_baseline === undefined
+        doc.manualBaseline === null || doc.manualBaseline === undefined
           ? undefined
-          : Number(row.manual_baseline),
+          : Number(doc.manualBaseline),
     });
 
     this.state.channels[channelId] = {
@@ -243,60 +219,79 @@ export class CountingStore {
     return cloneChannelState(draft);
   }
 
-  private async ensureSchema(): Promise<void> {
-    await this.db.query(ensureSchemaSQL);
-  }
-
   private async persistChannel(channel: CountingChannelState): Promise<void> {
-    await this.db.query(
-      `INSERT INTO counting_channels (channel_id, last_number, topic_page, goal, goal_source, manual_baseline, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
-       ON CONFLICT (channel_id) DO UPDATE SET
-         last_number = EXCLUDED.last_number,
-         topic_page = EXCLUDED.topic_page,
-         goal = EXCLUDED.goal,
-         goal_source = EXCLUDED.goal_source,
-         manual_baseline = EXCLUDED.manual_baseline,
-         updated_at = NOW()`,
-      [
-        channel.channelId,
-        channel.lastNumber,
-        channel.topicPage,
-        channel.goal ?? null,
-        channel.goalSource,
-        channel.manualBaseline ?? null,
-      ]
+    await this.ensureIndexes();
+    await this.channels.updateOne(
+      { _id: channel.channelId },
+      {
+        $set: {
+          channelId: channel.channelId,
+          lastNumber: channel.lastNumber,
+          topicPage: channel.topicPage,
+          goal: channel.goal ?? null,
+          goalSource: channel.goalSource,
+          manualBaseline: channel.manualBaseline ?? null,
+          updatedAt: new Date(),
+        },
+      },
+      { upsert: true }
     );
   }
 
   private async persistLeaderboardEntry(channelId: string, entry: LeaderboardEntry): Promise<void> {
-    await this.db.query(
-      `INSERT INTO counting_leaderboard (channel_id, user_id, display_name, count, updated_at)
-       VALUES ($1, $2, $3, $4, NOW())
-       ON CONFLICT (channel_id, user_id) DO UPDATE SET
-         display_name = EXCLUDED.display_name,
-         count = EXCLUDED.count,
-         updated_at = NOW()`,
-      [channelId, entry.userId, entry.displayName, entry.count]
+    await this.ensureIndexes();
+    await this.leaderboard.updateOne(
+      { _id: buildLeaderboardId(channelId, entry.userId) },
+      {
+        $set: {
+          channelId,
+          userId: entry.userId,
+          displayName: entry.displayName,
+          count: entry.count,
+          updatedAt: new Date(),
+        },
+      },
+      { upsert: true }
     );
+  }
+
+  private async ensureIndexes(): Promise<void> {
+    if (this.indexesEnsured) {
+      return;
+    }
+
+    await Promise.all([
+      this.channels.createIndex({ updatedAt: 1 }),
+      this.leaderboard.createIndex({ channelId: 1 }),
+    ]);
+
+    this.indexesEnsured = true;
   }
 }
 
-type ChannelRow = {
-  channel_id: string;
-  last_number: string | number | null;
-  topic_page: number | null;
-  goal: string | number | null;
-  goal_source: string | null;
-  manual_baseline: string | number | null;
+type ChannelDocument = {
+  _id: string;
+  channelId: string;
+  lastNumber: number;
+  topicPage: number;
+  goal?: number | null;
+  goalSource: GoalSource;
+  manualBaseline?: number | null;
+  updatedAt: Date;
 };
 
-type LeaderboardRow = {
-  channel_id: string;
-  user_id: string;
-  display_name: string;
+type LeaderboardDocument = {
+  _id: string;
+  channelId: string;
+  userId: string;
+  displayName: string;
   count: number;
+  updatedAt: Date;
 };
+
+function buildLeaderboardId(channelId: string, userId: string): string {
+  return `${channelId}:${userId}`;
+}
 
 function createDefaultChannelState(channelId: string): CountingChannelState {
   return {

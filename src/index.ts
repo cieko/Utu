@@ -1,7 +1,7 @@
 import { Client, Events, GatewayIntentBits } from 'discord.js';
 import { env } from './config/env';
 import { commandMap } from './commands';
-import { createPool } from './lib/db';
+import { connectToDatabase, type DatabaseConnection } from './lib/db';
 import { CountingStore } from './features/counting/store';
 import { CountingFeature } from './features/counting';
 
@@ -13,15 +13,20 @@ const client = new Client({
   ],
 });
 
-const dbPool = createPool(env.databaseUrl);
-const countingStore = new CountingStore(dbPool);
-const countingFeature = new CountingFeature({
-  client,
-  store: countingStore,
-  channels: env.countingChannels,
-});
+let dbConnection: DatabaseConnection | null = null;
 
-countingFeature.register();
+async function bootstrapCountingFeature(): Promise<void> {
+  dbConnection = await connectToDatabase(env.databaseUrl);
+
+  const countingStore = new CountingStore(dbConnection.db);
+  const countingFeature = new CountingFeature({
+    client,
+    store: countingStore,
+    channels: env.countingChannels,
+  });
+
+  countingFeature.register();
+}
 
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`✅ Logged in as ${readyClient.user.tag}`);
@@ -66,6 +71,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 async function main() {
+  await bootstrapCountingFeature();
+
   console.log('🔌 Logging in...');
   await client.login(env.token);
 }
@@ -77,9 +84,9 @@ void main().catch((error) => {
 
 const shutdown = async () => {
   try {
-    await dbPool.end();
+    await dbConnection?.client.close();
   } catch (error) {
-    console.error('Error while closing database pool:', error);
+    console.error('Error while closing database connection:', error);
   }
 };
 

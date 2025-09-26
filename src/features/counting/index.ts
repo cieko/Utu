@@ -216,16 +216,37 @@ export class CountingFeature {
     this.logger.log(
       `[counting] Rejected message ${message.id} from ${message.author.tag}: ${reason}`
     );
+
     try {
       await message.delete();
     } catch (error) {
-      this.logger.error('Failed to delete invalid counting message:', error);
+      this.logger.error("Failed to delete invalid counting message:", error);
     }
 
-    const detail = `I had to remove your counting entry. The next valid submission should be **owo ${expected}**. ${reason}`;
-    await sendTemporaryNotice(channel, detail, this.logger, message.author.id);
+    // Calculate UNIX timestamp for now + 7s
+    const expireAt = Math.floor((Date.now() + 7000) / 1000);
+
+    const detail =
+      `> ⚠️ <@${message.author.id}>\n` +
+      `-# Your counting entry was removed.\n` +
+      `-# Next valid submission → **owo ${expected}**\n` +
+      `-# ***Reason:*** ${reason}\n\n` +
+      `-# *(This notice disappears <t:${expireAt}:R>)*`;
+
+    try {
+      const notice = await channel.send(detail);
+
+      // delete after 7s
+      setTimeout(async () => {
+        try {
+          await notice.delete();
+        } catch { }
+      }, 7000);
+    } catch (error) {
+      this.logger.error("Failed to send temporary notice:", error);
+    }
 
     const scheduler = this.schedulers.get(channel.id);
-    scheduler?.requestImmediateUpdate('message-rejected');
+    scheduler?.requestImmediateUpdate("message-rejected");
   }
 }
